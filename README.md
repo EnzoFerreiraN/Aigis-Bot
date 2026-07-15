@@ -142,6 +142,8 @@ A rede privada do Railway é **IPv6-only**. Por isso:
 
 Configure o serviço `bot` para fazer **auto-deploy** a cada push na branch `main` nas configurações do serviço no Railway. O Railway rebuilda a imagem automaticamente.
 
+> ✅ Este projeto está implantado no Railway (serviços `bot` + `cobalt`, projeto `Aigis-Bot`), com o serviço `bot` conectado a este repositório e auto-deploy ativo na branch `main`.
+
 > **Tip:** Use a [skill do Railway no Claude Code](https://railway.app) (`/use-railway`) para provisionar serviços, configurar variáveis e gerenciar o deploy diretamente pelo terminal.
 
 ---
