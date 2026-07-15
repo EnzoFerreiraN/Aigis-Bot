@@ -1,0 +1,25 @@
+services:
+  cobalt:
+    image: ghcr.io/imputnet/cobalt:11
+    init: true
+    read_only: true
+    restart: unless-stopped
+    container_name: aigis_cobalt
+    # Porta não exposta ao host — comunicação apenas via rede interna do compose
+    environment:
+      # URL pela qual a instância se referencia a si mesma (necessário para tunnels)
+      API_URL: "http://cobalt:9000/"
+      API_PORT: "9000"
+
+  bot:
+    build: ./bot
+    restart: unless-stopped
+    container_name: aigis_bot
+    depends_on:
+      - cobalt
+    env_file:
+      - .env
+    environment:
+      # URL interna do Cobalt — o bot alcança via nome do serviço no compose
+      COBALT_API_URL: "http://cobalt:9000"
+    # Sem portas expostas: o bot é cliente do Discord e do Cobalt, não serve HTTP
