@@ -65,6 +65,14 @@ YTDL_OPTIONS: dict = {
     "no_warnings": True,
     "default_search": "ytsearch",   # permite busca por texto além de URLs
     "source_address": "0.0.0.0",    # evitar erros de IPv6 em alguns ambientes
+    # IPs de datacenter (ex.: Railway) costumam levar o desafio "Sign in to
+    # confirm you're not a bot" do cliente web. Os clientes android/ios não
+    # exigem esse desafio, então tentamos eles primeiro.
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android", "web"],
+        },
+    },
 }
 
 # Opções passadas ao ffmpeg pelo discord.py

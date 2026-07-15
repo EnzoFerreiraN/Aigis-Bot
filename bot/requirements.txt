@@ -1,4 +1,6 @@
 discord.py[voice]>=2.7.1
+# yt-dlp sem versão fixa: sempre puxa a última release no build, já que o
+# YouTube muda as defesas anti-bot com frequência e o yt-dlp acompanha.
 yt-dlp
 aiohttp
 PyNaCl
