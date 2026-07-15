@@ -1,4 +1,4 @@
-# 🤖 Aigis — Bot de Discord
+# Aigis 
 
 Bot de Discord com player de música do YouTube e extrator de GIFs do X/Twitter.
 
