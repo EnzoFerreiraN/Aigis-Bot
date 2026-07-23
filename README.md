@@ -12,7 +12,7 @@ Bot de Discord com player de música do YouTube e extrator de GIFs do X/Twitter.
 | `!pause` / `/pause` | Pausa a reprodução |
 | `!resume` / `/resume` | Retoma a reprodução pausada |
 | `!stop` / `/stop` | Para a reprodução e sai do canal de voz |
-| `!gif <link do X>` / `/gif` | Extrai e envia um GIF do X/Twitter |
+| `!gif <link do X>` / `/gif` | Extrai um GIF do X/Twitter; se o link for de vídeo, converte os primeiros ~15s em GIF |
 
 > O prefixo padrão é `!` e pode ser alterado via a variável `COMMAND_PREFIX`.
 
@@ -153,5 +153,6 @@ Configure o serviço `bot` para fazer **auto-deploy** a cada push na branch `mai
 - **Zero disco:** nenhum arquivo temporário é criado. Áudio via streaming yt-dlp→ffmpeg; GIFs via `io.BytesIO`.
 - **URLs do YouTube expiram:** a URL de stream é resolvida no momento de tocar, não quando entra na fila, para evitar erros 403.
 - **Inatividade:** após 20 minutos sem reprodução, o bot desconecta do canal de voz e libera a fila da memória.
-- **GIFs grandes:** se o GIF exceder 8 MB, o bot tenta recomprimir via ffmpeg (pipe→pipe) antes de enviar. Se ainda exceder, avisa o usuário.
+- **Vídeos do X/Twitter:** se o link não for de um GIF nativo (ex.: tweet de vídeo), o bot converte os primeiros ~15s em GIF via ffmpeg (pipe→pipe, sem disco) antes de seguir o mesmo fluxo de tamanho/compressão.
+- **GIFs grandes:** se o GIF (nativo ou convertido de vídeo) exceder 8 MB, o bot tenta recomprimir via ffmpeg (pipe→pipe) antes de enviar. Se ainda exceder, avisa o usuário.
 - **yt-dlp:** instalado via pip para facilitar atualizações. Para atualizar: rebuild da imagem (`docker-compose up --build`).

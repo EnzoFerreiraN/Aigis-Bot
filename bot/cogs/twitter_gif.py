@@ -5,8 +5,11 @@ Fluxo:
   1. Valida que o link é de x.com / twitter.com.
   2. POST para o Cobalt com { url, convertGif: true }.
   3. Baixa o conteúdo (tunnel/redirect) para um io.BytesIO em memória.
-  4. Se > 8 MB, tenta comprimir via ffmpeg pipe→pipe sem escrever em disco.
-  5. Envia como discord.File e descarta o buffer.
+  4. Se a mídia baixada não for um GIF (ex.: tweet de vídeo, que o Cobalt não
+     converte), converte os primeiros MAX_GIF_DURATION_SECONDS em GIF via
+     ffmpeg pipe→pipe sem escrever em disco.
+  5. Se > 8 MB, tenta comprimir via ffmpeg pipe→pipe sem escrever em disco.
+  6. Envia como discord.File e descarta o buffer.
 
 Nenhum arquivo é escrito em disco em nenhuma etapa.
 """
@@ -39,6 +42,13 @@ MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
 # downloads/recompressões ffmpeg simultâneos.
 GIF_COOLDOWN_SECONDS = 5.0
 
+# Duração máxima (segundos) de vídeo convertido para GIF. Vídeos maiores têm
+# apenas os primeiros segundos convertidos, evitando GIFs gigantes/lentos.
+MAX_GIF_DURATION_SECONDS = 15
+
+# Assinaturas de bytes para detectar se a mídia baixada já é um GIF.
+GIF_MAGIC = (b"GIF87a", b"GIF89a")
+
 # Hosts aceitos como "link do X/Twitter", incluindo mirrors comuns. Mirrors
 # são normalizados de volta para x.com antes de chamar o Cobalt (ver
 # _normalize_twitter_url), então o Cobalt sempre recebe um link canônico.
@@ -59,6 +69,24 @@ FFMPEG_COMPRESS_ARGS = [
     "-vf", "fps=12,scale=480:-1:flags=lanczos",
     "-f", "gif",
     "pipe:1",                # stdout
+]
+
+# Configuração de conversão de vídeo (mp4/webm) para GIF via ffmpeg.
+# "-t" antes de "-i" limita a LEITURA do stdin aos primeiros
+# MAX_GIF_DURATION_SECONDS, então vídeos longos não são lidos por inteiro.
+# palettegen/paletteuse melhora a qualidade de cor do GIF resultante.
+FFMPEG_VIDEO_TO_GIF_ARGS = [
+    "ffmpeg",
+    "-hide_banner",
+    "-loglevel", "error",
+    "-t", str(MAX_GIF_DURATION_SECONDS),
+    "-i", "pipe:0",          # stdin: mp4/webm
+    "-vf",
+    "fps=12,scale=480:-1:flags=lanczos,"
+    "split[s0][s1];[s0]palettegen=stats_mode=diff[p];"
+    "[s1][p]paletteuse=dither=bayer:bayer_scale=3",
+    "-f", "gif",
+    "pipe:1",                # stdout: gif
 ]
 
 
@@ -109,6 +137,40 @@ async def _compress_gif(data: bytes) -> bytes | None:
         return None
     except Exception as exc:
         log.error("Erro ao recomprimir GIF: %s", exc)
+        return None
+
+
+async def _video_to_gif(data: bytes) -> bytes | None:
+    """
+    Converte um vídeo (mp4/webm) em GIF via ffmpeg pipe→pipe sem escrever em
+    disco, limitando aos primeiros MAX_GIF_DURATION_SECONDS. Retorna os bytes
+    do GIF ou None em caso de falha.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *FFMPEG_VIDEO_TO_GIF_ARGS,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(input=data),
+            timeout=90.0,
+        )
+        if proc.returncode != 0:
+            log.warning("ffmpeg conversão vídeo→GIF falhou: %s", stderr.decode(errors="replace"))
+            return None
+        return stdout
+    except asyncio.TimeoutError:
+        log.warning("Timeout ao converter vídeo em GIF via ffmpeg.")
+        try:
+            proc.kill()
+            await proc.communicate()
+        except Exception:
+            pass
+        return None
+    except Exception as exc:
+        log.error("Erro ao converter vídeo em GIF: %s", exc)
         return None
 
 
@@ -235,7 +297,21 @@ class TwitterGif(commands.Cog):
         gif_data = raw_data  # referência local; raw_data liberado abaixo
         del raw_data
 
-        # 5. Verificar tamanho e, se necessário, comprimir
+        # 5. Se a mídia baixada não for um GIF (ex.: tweet de vídeo, que o
+        # Cobalt não converte apesar de convertGif=true), converte os
+        # primeiros segundos em GIF via ffmpeg antes de seguir o mesmo fluxo
+        # de checagem de tamanho/compressão usado para GIFs nativos.
+        if not gif_data.startswith(GIF_MAGIC):
+            await status_msg.edit(content="🎞️ Convertendo vídeo em GIF...")
+            converted = await _video_to_gif(gif_data)
+            del gif_data
+
+            if not converted:
+                await status_msg.edit(content="❌ Não consegui converter esse vídeo em GIF.")
+                return
+            gif_data = converted
+
+        # 6. Verificar tamanho e, se necessário, comprimir
         if len(gif_data) > DISCORD_MAX_BYTES:
             await status_msg.edit(content="⚙️ GIF grande — comprimindo...")
             compressed = await _compress_gif(gif_data)
@@ -250,7 +326,7 @@ class TwitterGif(commands.Cog):
                 )
                 return
 
-        # 6. Enviar como discord.File e descartar buffer; apaga o status no sucesso
+        # 7. Enviar como discord.File e descartar buffer; apaga o status no sucesso
         buf = io.BytesIO(gif_data)
         del gif_data  # GC pode liberar agora
 
@@ -266,7 +342,10 @@ class TwitterGif(commands.Cog):
     # ------------------------------------------------------------------
     # Comandos de prefixo
     # ------------------------------------------------------------------
-    @commands.command(name="gif", help="Extrai e envia um GIF de um link do X/Twitter.")
+    @commands.command(
+        name="gif",
+        help="Extrai um GIF de um link do X/Twitter, convertendo vídeos curtos (até 15s) em GIF.",
+    )
     @commands.cooldown(1, GIF_COOLDOWN_SECONDS, commands.BucketType.user)
     async def gif_prefix(self, ctx: commands.Context, *, url: str) -> None:
         await self._do_gif(ctx, url)
@@ -274,7 +353,10 @@ class TwitterGif(commands.Cog):
     # ------------------------------------------------------------------
     # Slash commands
     # ------------------------------------------------------------------
-    @app_commands.command(name="gif", description="Extrai e envia um GIF de um link do X/Twitter.")
+    @app_commands.command(
+        name="gif",
+        description="Extrai um GIF de um link do X/Twitter, convertendo vídeos curtos (até 15s) em GIF.",
+    )
     @app_commands.describe(url="Link do X/Twitter (x.com ou twitter.com)")
     @app_commands.checks.cooldown(1, GIF_COOLDOWN_SECONDS)
     async def gif_slash(self, interaction: discord.Interaction, url: str) -> None:
